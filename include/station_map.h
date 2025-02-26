@@ -1,6 +1,15 @@
 #ifndef STATION_MAP_H
 #define STATION_MAP_H
 
+/**
+ * Auto-generated station map header file
+ * Generated on: 2025-02-26 12:59:11
+ * 
+ * IMPORTANT: LED indices in this map correspond directly to the physical
+ * order of LEDs as they are soldered in the hardware. The order of stations
+ * in stations.csv determines these indices.
+ */
+
 #include <string>
 #include <map>
 #include "MtaHelper.h"

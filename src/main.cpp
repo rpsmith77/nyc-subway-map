@@ -1,44 +1,56 @@
 #include <Arduino.h>
-#include <FastLED.h>
-#include <WiFi.h>
-#include "WifiCredentials.h"
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include "MtaHelper.h"
+#include <FastLED.h>
+#include <HTTPClient.h>
+#include <WiFi.h>
 #include <time.h>
+
+#include "MtaHelper.h"
+#include "WifiCredentials.h"
 #include "station_map.h"
 
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 
 #define NUM_LEDS_SUBWAY 500
-#define DATA_PIN_SUBWAY 10 // D7
+#define DATA_PIN_SUBWAY 10  // D7
 
 #define NUM_LEDS_ERROR 2
-#define DATA_PIN_ERROR 5 // D2
+#define DATA_PIN_ERROR 5  // D2
 
 CRGB leds[NUM_LEDS_SUBWAY];
 CRGB error_leds[NUM_LEDS_ERROR];
-bool wifiConnection(false);
+bool wifi_connection(false);
+HTTPClient http;
 
-// Batch HTTP requests to avoid halting the program for more than .5 seconds per fetch
-int currentStation(0);
-int currentGroup(0);
-const int NUM_GROUPS = 45;
-int groupSize = stationMap.size() / NUM_GROUPS;
-const float FETCH_INTERVAL = 60 / NUM_GROUPS;
-const int JSON_DOC_SIZE = 5 * 1024;
+// Batch HTTP requests to avoid halting the program for more than .5 seconds per
+// fetch
+int current_station(0);
+int current_group(0);
+const int num_groups = 45;
+int group_size = stationMap.size() / num_groups;
+// ensure all groups are fetched within 1 minute
+const float fetch_interval = 60 / num_groups;
+const int json_doc_size = 5 * 1024;
 
-// Global variable to store the largest memory usage
-size_t largestMemoryUsage = 0;
+#ifdef DEBUG
+size_t largest_memory_usage = 0;
+#endif
+
+// Global counter for HTTP errors, fail if 10% of requests fail in a row.
+int http_error_count = 0;
+const int http_error_threshold = stationMap.size() * 0.1;
 
 // function declarations
-void wifi_connection();
-void initialize_time();
-void fetch_subway_data(Station& station);
-void fetch_station_group();
-void checkStationArrivals();
-void parse_trains(JsonArray trainsArray, std::vector<Train>& trains);
+void WifiConnection();
+void InitializeTime();
+void FetchSubwayData(Station &station);
+void FetchStationGroup();
+void CheckStationArrivals();
+void ParseTrains(JsonArray trains_array, std::vector<Train> &trains);
+void CheckHeap();
+void CheckHttpErrors();
+bool IsServerReachable(const char *host, uint16_t port);
 
 void setup() {
   Serial.begin(115200);
@@ -47,53 +59,50 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("Connecting to WiFi");
 
-  FastLED.addLeds<LED_TYPE, DATA_PIN_SUBWAY, COLOR_ORDER>(leds, NUM_LEDS_SUBWAY);
-  FastLED.addLeds<LED_TYPE, DATA_PIN_ERROR, COLOR_ORDER>(error_leds, NUM_LEDS_ERROR);
+  FastLED.addLeds<LED_TYPE, DATA_PIN_SUBWAY, COLOR_ORDER>(leds,
+                                                          NUM_LEDS_SUBWAY);
+  FastLED.addLeds<LED_TYPE, DATA_PIN_ERROR, COLOR_ORDER>(error_leds,
+                                                         NUM_LEDS_ERROR);
   FastLED.setBrightness(5);
 
-  initialize_time();
+  InitializeTime();
 
   delay(3000);
 
   Serial.println("Initializing Stations, should take about 15-20 seconds...");
-  for (auto& pair : stationMap) {
+  for (auto &pair : stationMap) {
     Serial.printf("Fetching data for station %s\n", pair.second.name.c_str());
-    fetch_subway_data(pair.second);
+    FetchSubwayData(pair.second);
   }
 }
 
 void loop() {
-  wifi_connection();
+  WifiConnection();
 
-  EVERY_N_BSECONDS(FETCH_INTERVAL) {
-    fetch_station_group();
-  }
+  EVERY_N_BSECONDS(fetch_interval) { FetchStationGroup(); }
 
-  checkStationArrivals();
+  CheckStationArrivals();
 
   FastLED.show();
-  
-  EVERY_N_BSECONDS(1) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-  }
 
+  EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
 }
 
 // put function definitions here:
-void wifi_connection() {
-  if (!wifiConnection && WiFi.status() == WL_CONNECTED) {
-    wifiConnection = true;
+void WifiConnection() {
+  if (!wifi_connection && WiFi.status() == WL_CONNECTED) {
+    wifi_connection = true;
     error_leds[0] = CRGB::White;
     Serial.println("Connected");
   }
   if (WiFi.status() != WL_CONNECTED) {
-    wifiConnection = false;
+    wifi_connection = false;
     error_leds[0] = error_leds[0] == CRGB::Red ? CRGB::Black : CRGB::Red;
     delay(500);
   }
 }
 
-void initialize_time() {
+void InitializeTime() {
   // Set timezone to Eastern Standard Time (EST)
   configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
@@ -106,89 +115,120 @@ void initialize_time() {
   Serial.println(&timeinfo, "Time initialized: %A, %B %d %Y %H:%M:%S");
 }
 
-void parse_trains(JsonArray trainsArray, std::vector<Train>& trains) {
-  for (JsonObject train : trainsArray) {
+void ParseTrains(JsonArray trains_array, std::vector<Train> &trains) {
+  for (JsonObject train : trains_array) {
     Train t;
-    t.routeId = train["route"].as<std::string>();
+    t.route_id = train["route"].as<std::string>();
     struct tm tm;
-    strptime(train["time"].as<const char*>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
-    t.arrivalTime = mktime(&tm);
+    strptime(train["time"].as<const char *>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
+    t.arrival_time = mktime(&tm);
     trains.push_back(t);
   }
 }
 
-void fetch_subway_data(Station& station) {
-  HTTPClient http;
+void FetchSubwayData(Station &station) {
   std::string url = API_BY_ID + station.id;
   http.begin(url.c_str());
-  int httpCode = http.GET();
-  if (httpCode > 0) {
+  int http_code = http.GET();
+  if (http_code > 0) {
     String payload = http.getString();
-    
-    DynamicJsonDocument doc(JSON_DOC_SIZE);
+
+    DynamicJsonDocument doc(json_doc_size);
     DeserializationError error = deserializeJson(doc, payload);
-    if (error) {
+    if (!error) {
+      doc.shrinkToFit();
+
+#ifdef DEBUG
+      size_t memory_usage = doc.memoryUsage();
+      if (memory_usage > largest_memory_usage) {
+        largest_memory_usage = memory_usage;
+      }
+#endif
+
+      station.trains.clear();
+      ParseTrains(doc["data"][0]["N"], station.trains);
+      ParseTrains(doc["data"][0]["S"], station.trains);
+    } else {
       Serial.print("deserializeJson() failed: ");
       Serial.println(error.c_str());
       return;
     }
-
-    // Update the largest memory usage
-    size_t memoryUsage = doc.memoryUsage();
-    if (memoryUsage > largestMemoryUsage) {
-      largestMemoryUsage = memoryUsage;
-    }
-
-    station.trains.clear();
-    parse_trains(doc["data"][0]["N"], station.trains);
-    parse_trains(doc["data"][0]["S"], station.trains);
   } else {
-    Serial.println("Error on HTTP request");
+    Serial.print("Error on HTTP request, code: ");
+    Serial.println(http_code);
+    Serial.print("Error message: ");
+    Serial.println(http.errorToString(http_code).c_str());
+    http_error_count++;
   }
   http.end();
 }
 
-void checkStationArrivals() {
-  time_t currentTime;
-  time(&currentTime);
+void CheckStationArrivals() {
+  time_t current_time;
+  time(&current_time);
   for (auto &pair : stationMap) {
     leds[pair.first] = CRGB::Black;
     Station &station = pair.second;
     for (Train &train : station.trains) {
-      if (train.atStation(currentTime)) {
-        leds[pair.first] = getTrainColor(train);
+      if (train.AtStation(current_time)) {
+        leds[pair.first] = GetTrainColor(train);
       }
     }
   }
 }
 
-void fetch_station_group() {
-  int startIndex = currentGroup * groupSize;
-  int endIndex = (currentGroup + 1) * groupSize;
-  if (currentGroup == NUM_GROUPS - 1) {
-    endIndex = stationMap.size(); // Ensure the last group includes any remaining stations
+void FetchStationGroup() {
+  int start_index = current_group * group_size;
+  int end_index = (current_group + 1) * group_size;
+  // Ensure the last group includes any remaining stations
+  if (current_group == num_groups - 1) {
+    end_index = stationMap.size();
   }
 
   auto it = stationMap.begin();
-  std::advance(it, startIndex);
-  for (int i = startIndex; i < endIndex && it != stationMap.end(); ++i, ++it) {
-    fetch_subway_data(it->second);
+  std::advance(it, start_index);
+  for (int i = start_index; i < end_index && it != stationMap.end();
+       ++i, ++it) {
+    FetchSubwayData(it->second);
   }
 
-  currentGroup = (currentGroup + 1) % NUM_GROUPS;
+  current_group = (current_group + 1) % num_groups;
 
-  // Print heap size after fetching data
-  size_t freeHeap = ESP.getFreeHeap();
-  Serial.print("Heap size after fetch: ");
-  Serial.println(freeHeap);
+  CheckHeap();
+  CheckHttpErrors();
+}
 
-  // Print the largest memory usage
-  Serial.print("Largest memory usage: ");
-  Serial.println(largestMemoryUsage);
-
-  // Reboot the board if the heap size is below 1.25 times the JSON document size
-  if (freeHeap < 1.25 * JSON_DOC_SIZE) {
-    Serial.println("Heap size is below 1.25 times the JSON document size, rebooting...");
+void CheckHeap() {
+  size_t free_heap = ESP.getFreeHeap();
+#ifdef DEBUG
+  Serial.printf("Largest memory usage: %d\n", largest_memory_usage);
+  Serial.printf("Free heap: %d\n", free_heap);
+#endif
+  if (free_heap < 1.25 * json_doc_size) {
+    Serial.println(
+        "Heap size is below 1.25 times the JSON document size, rebooting...");
     ESP.restart();
+  }
+}
+
+void CheckHttpErrors() {
+  if (http_error_count == 0) {
+    return;
+  }
+  if (http_error_count > http_error_threshold && wifi_connection &&
+      IsServerReachable(SERVER_HOST.c_str(), std::stoi(SERVER_PORT))) {
+    Serial.println("HTTP error threshold exceeded, taking action...");
+    ESP.restart();
+  }
+  http_error_count = 0;
+}
+
+bool IsServerReachable(const char *host, uint16_t port) {
+  WiFiClient client;
+  if (client.connect(host, port)) {
+    client.stop();
+    return true;
+  } else {
+    return false;
   }
 }
