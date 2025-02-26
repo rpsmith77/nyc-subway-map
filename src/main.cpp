@@ -27,6 +27,10 @@ int currentGroup(0);
 const int NUM_GROUPS = 45;
 int groupSize = stationMap.size() / NUM_GROUPS;
 const float FETCH_INTERVAL = 60 / NUM_GROUPS;
+const int JSON_DOC_SIZE = 5 * 1024;
+
+// Global variable to store the largest memory usage
+size_t largestMemoryUsage = 0;
 
 // function declarations
 void wifi_connection();
@@ -72,6 +76,7 @@ void loop() {
   EVERY_N_BSECONDS(1) {
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
+
 }
 
 // put function definitions here:
@@ -84,6 +89,7 @@ void wifi_connection() {
   if (WiFi.status() != WL_CONNECTED) {
     wifiConnection = false;
     error_leds[0] = error_leds[0] == CRGB::Red ? CRGB::Black : CRGB::Red;
+    delay(500);
   }
 }
 
@@ -118,12 +124,19 @@ void fetch_subway_data(Station& station) {
   int httpCode = http.GET();
   if (httpCode > 0) {
     String payload = http.getString();
-    DynamicJsonDocument doc(20 * 1024);
+    
+    DynamicJsonDocument doc(JSON_DOC_SIZE);
     DeserializationError error = deserializeJson(doc, payload);
     if (error) {
       Serial.print("deserializeJson() failed: ");
       Serial.println(error.c_str());
       return;
+    }
+
+    // Update the largest memory usage
+    size_t memoryUsage = doc.memoryUsage();
+    if (memoryUsage > largestMemoryUsage) {
+      largestMemoryUsage = memoryUsage;
     }
 
     station.trains.clear();
@@ -135,43 +148,47 @@ void fetch_subway_data(Station& station) {
   http.end();
 }
 
-void checkStationArrivals()
-{
+void checkStationArrivals() {
   time_t currentTime;
   time(&currentTime);
-  for (auto &pair : stationMap)
-  {
+  for (auto &pair : stationMap) {
     leds[pair.first] = CRGB::Black;
     Station &station = pair.second;
-    for (Train &train : station.trains)
-    {
-      if (train.atStation(currentTime))
-      {
+    for (Train &train : station.trains) {
+      if (train.atStation(currentTime)) {
         leds[pair.first] = getTrainColor(train);
       }
     }
   }
 }
 
-void fetch_station_group()
-{
+void fetch_station_group() {
   int startIndex = currentGroup * groupSize;
   int endIndex = (currentGroup + 1) * groupSize;
-  if (currentGroup == NUM_GROUPS - 1)
-  {
+  if (currentGroup == NUM_GROUPS - 1) {
     endIndex = stationMap.size(); // Ensure the last group includes any remaining stations
   }
 
   auto it = stationMap.begin();
   std::advance(it, startIndex);
-  for (int i = startIndex; i < endIndex && it != stationMap.end(); ++i, ++it)
-  {
+  for (int i = startIndex; i < endIndex && it != stationMap.end(); ++i, ++it) {
     fetch_subway_data(it->second);
   }
 
   currentGroup = (currentGroup + 1) % NUM_GROUPS;
 
   // Print heap size after fetching data
+  size_t freeHeap = ESP.getFreeHeap();
   Serial.print("Heap size after fetch: ");
-  Serial.println(ESP.getFreeHeap());
+  Serial.println(freeHeap);
+
+  // Print the largest memory usage
+  Serial.print("Largest memory usage: ");
+  Serial.println(largestMemoryUsage);
+
+  // Reboot the board if the heap size is below 1.25 times the JSON document size
+  if (freeHeap < 1.25 * JSON_DOC_SIZE) {
+    Serial.println("Heap size is below 1.25 times the JSON document size, rebooting...");
+    ESP.restart();
+  }
 }

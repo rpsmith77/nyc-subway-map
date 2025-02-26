@@ -6,6 +6,8 @@
 #include <ctime>
 #include <vector>
 
+const int ARRIVAL_WINDOW = 30;
+
 struct Train {
     std::string routeId;
     time_t arrivalTime;
@@ -16,7 +18,7 @@ struct Train {
     }
 
     bool atStation(time_t currentTime) const {
-        return std::difftime(currentTime, arrivalTime) >= 0 && std::difftime(currentTime, arrivalTime) <= 30;
+        return std::difftime(currentTime, arrivalTime) >= 0 && std::difftime(currentTime, arrivalTime) <= ARRIVAL_WINDOW;
     }
 };
 
