@@ -154,7 +154,16 @@ void FetchSubwayData(Station &station) {
       return;
     }
   } else {
-    Serial.print("Error on HTTP request, code: ");
+    // Get current time for error logging
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    // Print timestamp with error information
+    Serial.print("[");
+    Serial.print(&timeinfo, "%Y-%m-%d %H:%M:%S");
+    Serial.print("]\nError on HTTP request, code: ");
     Serial.println(http_code);
     Serial.print("Error message: ");
     Serial.println(http.errorToString(http_code).c_str());
