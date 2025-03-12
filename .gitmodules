@@ -1,0 +1,3 @@
+[submodule "MTAPI"]
+	path = MTAPI
+	url = ./MTAPI
