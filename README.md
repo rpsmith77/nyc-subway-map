@@ -123,7 +123,7 @@ Using Arduino IDE:
 
 The  station_map.h  file maps LED indices to MTA station IDs. Each LED index corresponds to a physical LED position on your map.
 
-If you need to modify station positions:
+If you need to modify station positions **use the station map generation file in scripts**, or alternatively:
 
 1.  Edit the  station_map.h  file to match your physical LED layout
 2.  Make sure the LED indices match the order in which LEDs are connected in your physical installation
