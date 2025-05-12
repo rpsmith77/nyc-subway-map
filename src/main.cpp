@@ -103,16 +103,22 @@ void WifiConnection() {
 }
 
 void InitializeTime() {
-  // Set timezone to Eastern Standard Time (EST)
-  configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
-  // Wait for time to be set
+  // Set the POSIX timezone string for US Eastern Time.
+  // EST5EDT: Standard time is EST (UTC-5), Daylight time is EDT.
+  // M3.2.0/2: DST starts on the second Sunday of March at 2 AM.
+  // M11.1.0/2: DST ends on the first Sunday of November at 2 AM.
+  setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0/2", 1);
+  tzset();
+
+  Serial.println("Attempting to initialize time with TZ string for automatic DST...");
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time");
+    Serial.println("Failed to obtain time after setting TZ environment variable.");
     return;
   }
-  Serial.println(&timeinfo, "Time initialized: %A, %B %d %Y %H:%M:%S");
+  Serial.println(&timeinfo, "Time initialized: %A, %B %d %Y %H:%M:%S %Z (%z)");
 }
 
 void ParseTrains(JsonArray trains_array, std::vector<Train> &trains) {
