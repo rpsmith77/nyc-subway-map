@@ -44,7 +44,7 @@ The system connects to the MTA's real-time data feeds through a custom MTAPI ser
 -   **MtaHelper.h**: Contains the  Station  and  Train  classes and helpers for API access
 -   **station_map.h**: Maps LED indices to MTA station IDs (auto-generated)
 -   **WifiCredentials.h**: Contains your WiFi credentials and server settings
--   **MTAPI Server**: Python-based service that interfaces with the official MTA API
+-   **[MTAPI Server](https://github.com/rpsmith77/MTAPI)**: Python-based service that interfaces with the official MTA API
 
 ## Setup Instructions
 
