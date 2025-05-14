@@ -5,7 +5,7 @@ A real-time visualization of NYC subway train locations using an ESP32 microcont
 
 ## Demo
 
-[![Demo Video](https://img.youtube.com/vi/n46n9YuOSNA/0.jpg)]([https://www.youtube.com/watch?v=VIDEO_ID](https://youtube.com/shorts/n46n9YuOSNA?feature=share))
+[![Watch the video](https://img.youtube.com/vi/n46n9YuOSNA/maxresdefault.jpg)](https://youtube.com/shorts/n46n9YuOSNA)
 
 ## How It Works
 
