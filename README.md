@@ -3,6 +3,10 @@
 
 A real-time visualization of NYC subway train locations using an ESP32 microcontroller and LED strips. This project creates a physical illuminated map that shows trains arriving at stations throughout the New York City subway system by lighting up LEDs at station locations when trains are present.
 
+## Demo
+
+[![Demo Video](https://img.youtube.com/vi/n46n9YuOSNA/0.jpg)]([https://www.youtube.com/watch?v=VIDEO_ID](https://youtube.com/shorts/n46n9YuOSNA?feature=share))
+
 ## How It Works
 
 The system connects to the MTA's real-time data feeds through a custom MTAPI server. As trains arrive at stations across the NYC subway system, corresponding LEDs on your physical map light up in the color of the train line (e.g., yellow for the N/Q/R lines, red for the 1/2/3, etc.). The result is a living, breathing visualization of the entire subway network.
