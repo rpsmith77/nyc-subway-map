@@ -77,12 +77,10 @@ const  std::string  API_BY_ID  =  "http://"  +  SERVER_HOST  +  ":"  +  SERVER_P
 ### 3. MTAPI Server Setup
 
 1.  Clone the MTAPI repository (included in this project or available at  GitHub)
-    
-2.  (Depricated) Get an MTA API key from  MTA Developer Portal
-    
-3.  Create a  `settings.cfg`  file based on  `settings.cfg.sample`:
+        
+2.  Create a  `settings.cfg`  file based on  `settings.cfg.sample`:
 ```docker
-	   MTA_KEY = 'your_mta_api_key' #deprecated
+       # MTA_KEY = 'your_mta_api_key' #deprecated
        STATIONS_FILE = 'data/stations.json'
        CACHE_SECONDS = 60
        MAX_TRAINS = 10
@@ -174,7 +172,6 @@ if  (free_heap  <  1.25  *  json_doc_size)  {
 
 ### MTAPI Server Issues
 
--   **API errors**: Check your MTA API key is valid
 -   **Invalid station data**: Ensure your stations.json file is properly formatted
 -   **Server crashes**: Check logs for Python errors, may need more memory
 
