@@ -28,6 +28,8 @@ unsigned long ws_backoff = 1000; // Start with 1 second
 const unsigned long WS_MAX_BACKOFF = 32000; // Max 32 seconds
 const int WS_MAX_ATTEMPTS = 10;
 int ws_attempts = 0;
+bool train_data_received = false;
+unsigned long pulse_start = 0;
 
 const int json_doc_size = 200 * 1024;
 
@@ -41,6 +43,7 @@ void AddNewTrains(Station& station, JsonArray arr);
 void HandleStationUpdate(JsonObject stationObj, time_t now);
 void OnWebSocketMessage(websockets::WebsocketsMessage msg);
 void CheckWebsocketConnection();
+void StartupSequence();
 
 void setup() {
   Serial.begin(115200);
@@ -80,7 +83,13 @@ void setup() {
 void loop() {
   WifiConnection();
   CheckWebsocketConnection();
-  CheckStationArrivals();
+
+  if (!train_data_received) {
+    StartupSequence();
+  } else {
+    CheckStationArrivals();
+  }
+
   FastLED.show();
   wsClient.poll(); 
   EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
@@ -212,6 +221,8 @@ void OnWebSocketMessage(websockets::WebsocketsMessage msg) {
   Serial.println(msg.data());
 #endif
 
+  train_data_received = true; // Mark that data has arrived
+
   DynamicJsonDocument doc(json_doc_size);
   DeserializationError error = deserializeJson(doc, msg.data());
   if (error) {
@@ -245,5 +256,19 @@ void CheckWebsocketConnection() {
     ws_attempts = 0;
     ws_backoff = 1000;
     ws_last_attempt = millis();
+  }
+}
+
+void StartupSequence() {
+  // Alternate every other LED on/off, then swap every second
+  const uint32_t period = 2000; // 2 seconds for a full cycle
+  const uint32_t now = millis();
+  bool even_on = ((now % period) < (period / 2));
+
+  CRGB warmWhite = CRGB(255, 180, 80); // Warm white color
+
+  for (int i = 0; i < NUM_LEDS_SUBWAY; ++i) {
+    bool is_even = (i % 2 == 0);
+    leds[i] = (is_even == even_on) ? warmWhite : CRGB::Black;
   }
 }
