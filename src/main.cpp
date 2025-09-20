@@ -4,10 +4,11 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <time.h>
-
+#include <ArduinoWebsockets.h>
 #include "MtaHelper.h"
 #include "WifiCredentials.h"
 #include "station_map.h"
+#include <set>
 
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
@@ -21,36 +22,48 @@
 CRGB leds[NUM_LEDS_SUBWAY];
 CRGB error_leds[NUM_LEDS_ERROR];
 bool wifi_connection(false);
-HTTPClient http;
+websockets::WebsocketsClient wsClient;
 
-// Batch HTTP requests to avoid halting the program for more than .5 seconds per
-// fetch
-int current_station(0);
-int current_group(0);
-const int num_groups = 45;
-int group_size = stationMap.size() / num_groups;
-// ensure all groups are fetched within 1 minute
-const float fetch_interval = 60 / num_groups;
-const int json_doc_size = 5 * 1024;
-
-#ifdef DEBUG
-size_t largest_memory_usage = 0;
-#endif
-
-// Global counter for HTTP errors, fail if 10% of requests fail in a row.
-int http_error_count = 0;
-const int http_error_threshold = stationMap.size() * 0.1;
+const int json_doc_size = 200 * 1024;
 
 // function declarations
 void WifiConnection();
 void InitializeTime();
-void FetchSubwayData(Station &station);
-void FetchStationGroup();
 void CheckStationArrivals();
 void ParseTrains(JsonArray trains_array, std::vector<Train> &trains);
-void CheckHeap();
-void CheckHttpErrors();
 bool IsServerReachable(const char *host, uint16_t port);
+
+void onWebSocketMessage(websockets::WebsocketsMessage msg) {
+#ifdef DEBUG
+  Serial.print("WebSocket message: ");
+  Serial.println(msg.data());
+#endif
+
+  DynamicJsonDocument doc(json_doc_size);
+  DeserializationError error = deserializeJson(doc, msg.data());
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonArray stations = doc["data"].as<JsonArray>();
+  for (JsonObject stationObj : stations) {
+    String id = stationObj["id"];
+    int station_id = atoi(id.c_str());
+    auto it = stationMap.find(station_id);
+    if (it != stationMap.end()) {
+      Station &station = it->second;
+      station.trains.clear();
+      if (stationObj.containsKey("N")) {
+        ParseTrains(stationObj["N"].as<JsonArray>(), station.trains);
+      }
+      if (stationObj.containsKey("S")) {
+        ParseTrains(stationObj["S"].as<JsonArray>(), station.trains);
+      }
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -58,6 +71,12 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("Connecting to WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
 
   FastLED.addLeds<LED_TYPE, DATA_PIN_SUBWAY, COLOR_ORDER>(leds,
                                                           NUM_LEDS_SUBWAY);
@@ -69,23 +88,33 @@ void setup() {
 
   delay(3000);
 
-  Serial.println("Initializing Stations, should take about 15-20 seconds...");
-  for (auto &pair : stationMap) {
-    Serial.printf("Fetching data for station %s\n", pair.second.name.c_str());
-    FetchSubwayData(pair.second);
+
+  wsClient.onMessage(onWebSocketMessage);
+  String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
+  wsClient.connect(wsUrl); 
+}
+
+void check_websocket_connection() {
+  if (!wsClient.available()) {
+    Serial.println("WebSocket disconnected, attempting to reconnect...");
+    String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
+    wsClient.connect(wsUrl);
   }
 }
 
 void loop() {
   WifiConnection();
 
-  EVERY_N_BSECONDS(fetch_interval) { FetchStationGroup(); }
-
   CheckStationArrivals();
 
   FastLED.show();
 
   EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
+
+  wsClient.poll(); 
+
+  EVERY_N_BSECONDS(60) { check_websocket_connection(); }
+
 }
 
 // put function definitions here:
@@ -132,110 +161,43 @@ void ParseTrains(JsonArray trains_array, std::vector<Train> &trains) {
   }
 }
 
-void FetchSubwayData(Station &station) {
-  std::string url = API_BY_ID + station.id;
-  http.begin(url.c_str());
-  int http_code = http.GET();
-  if (http_code > 0) {
-    String payload = http.getString();
-
-    DynamicJsonDocument doc(json_doc_size);
-    DeserializationError error = deserializeJson(doc, payload);
-    if (!error) {
-      doc.shrinkToFit();
-
-#ifdef DEBUG
-      size_t memory_usage = doc.memoryUsage();
-      if (memory_usage > largest_memory_usage) {
-        largest_memory_usage = memory_usage;
-      }
-#endif
-
-      station.trains.clear();
-      ParseTrains(doc["data"][0]["N"], station.trains);
-      ParseTrains(doc["data"][0]["S"], station.trains);
-    } else {
-      Serial.print("deserializeJson() failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
-  } else {
-    // Get current time for error logging
-    time_t now;
-    struct tm timeinfo;
-    time(&now);
-    localtime_r(&now, &timeinfo);
-    
-    // Print timestamp with error information
-    Serial.print("[");
-    Serial.print(&timeinfo, "%Y-%m-%d %H:%M:%S");
-    Serial.print("]\nError on HTTP request, code: ");
-    Serial.println(http_code);
-    Serial.print("Error message: ");
-    Serial.println(http.errorToString(http_code).c_str());
-    http_error_count++;
-  }
-  http.end();
-}
 
 void CheckStationArrivals() {
+#ifdef DEBUG
+  static std::map<int, std::set<std::string>> trains_at_station_last; // station_id -> set of train route_ids
+#endif  
   time_t current_time;
   time(&current_time);
+
   for (auto &pair : stationMap) {
     leds[pair.first] = CRGB::Black;
     Station &station = pair.second;
+    std::set<std::string> trains_now;
+
     for (Train &train : station.trains) {
       if (train.AtStation(current_time)) {
         leds[pair.first] = GetTrainColor(train);
+        trains_now.insert(train.route_id);
+
+#ifdef DEBUG
+        // Print only if train was not at station in previous check
+        if (trains_at_station_last[pair.first].count(train.route_id) == 0) {
+          Serial.printf(
+            "Train %s ENTERED station %s (ID: %d) at %s",
+            train.route_id.c_str(),
+            station.name.c_str(),
+            station.id,
+            ctime(&train.arrival_time)
+          );
+        }
+#endif
       }
     }
-  }
-}
-
-void FetchStationGroup() {
-  int start_index = current_group * group_size;
-  int end_index = (current_group + 1) * group_size;
-  // Ensure the last group includes any remaining stations
-  if (current_group == num_groups - 1) {
-    end_index = stationMap.size();
-  }
-
-  auto it = stationMap.begin();
-  std::advance(it, start_index);
-  for (int i = start_index; i < end_index && it != stationMap.end();
-       ++i, ++it) {
-    FetchSubwayData(it->second);
-  }
-
-  current_group = (current_group + 1) % num_groups;
-
-  CheckHeap();
-  CheckHttpErrors();
-}
-
-void CheckHeap() {
-  size_t free_heap = ESP.getFreeHeap();
 #ifdef DEBUG
-  Serial.printf("Largest memory usage: %d\n", largest_memory_usage);
-  Serial.printf("Free heap: %d\n", free_heap);
+    // Update the set for next check
+    trains_at_station_last[pair.first] = trains_now;
 #endif
-  if (free_heap < 1.25 * json_doc_size) {
-    Serial.println(
-        "Heap size is below 1.25 times the JSON document size, rebooting...");
-    ESP.restart();
   }
-}
-
-void CheckHttpErrors() {
-  if (http_error_count == 0) {
-    return;
-  }
-  if (http_error_count > http_error_threshold && wifi_connection &&
-      IsServerReachable(SERVER_HOST.c_str(), std::stoi(SERVER_PORT))) {
-    Serial.println("HTTP error threshold exceeded, taking action...");
-    ESP.restart();
-  }
-  http_error_count = 0;
 }
 
 bool IsServerReachable(const char *host, uint16_t port) {
