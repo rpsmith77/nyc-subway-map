@@ -23,6 +23,11 @@ CRGB leds[NUM_LEDS_SUBWAY];
 CRGB error_leds[NUM_LEDS_ERROR];
 bool wifi_connection(false);
 websockets::WebsocketsClient wsClient;
+unsigned long ws_last_attempt = 0;
+unsigned long ws_backoff = 1000; // Start with 1 second
+const unsigned long WS_MAX_BACKOFF = 32000; // Max 32 seconds
+const int WS_MAX_ATTEMPTS = 10;
+int ws_attempts = 0;
 
 const int json_doc_size = 200 * 1024;
 
@@ -34,7 +39,8 @@ Station* FindStationById(const std::string& id);
 void RemoveExpiredTrains(Station& station, time_t now);
 void AddNewTrains(Station& station, JsonArray arr);
 void HandleStationUpdate(JsonObject stationObj, time_t now);
-void onWebSocketMessage(websockets::WebsocketsMessage msg);
+void OnWebSocketMessage(websockets::WebsocketsMessage msg);
+void CheckWebsocketConnection();
 
 void setup() {
   Serial.begin(115200);
@@ -58,25 +64,25 @@ void setup() {
   delay(3000);
 
 
-  wsClient.onMessage(onWebSocketMessage);
+  wsClient.onMessage(OnWebSocketMessage);
+  wsClient.onEvent([](websockets::WebsocketsEvent e, String data){
+#ifdef DEBUG
+    if (e == websockets::WebsocketsEvent::ConnectionOpened) Serial.println("WS opened");
+    if (e == websockets::WebsocketsEvent::ConnectionClosed) Serial.println("WS closed");
+    if (e == websockets::WebsocketsEvent::GotPing) Serial.println("WS ping");
+    if (e == websockets::WebsocketsEvent::GotPong) Serial.println("WS pong");
+#endif
+  });
   String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
   wsClient.connect(wsUrl); 
 }
 
-void check_websocket_connection() {
-  if (!wsClient.available()) {
-    Serial.println("WebSocket disconnected, attempting to reconnect...");
-    String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
-    wsClient.connect(wsUrl);
-  }
-}
-
 void loop() {
   WifiConnection();
+  CheckWebsocketConnection();
   CheckStationArrivals();
   FastLED.show();
   wsClient.poll(); 
-  EVERY_N_BSECONDS(30) { check_websocket_connection(); }
   EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
 }
 
@@ -115,7 +121,7 @@ void InitializeTime() {
 
 void CheckStationArrivals() {
 #ifdef DEBUG
-  static std::map<int, std::set<std::string>> trains_at_station_last; // station_id -> set of train route_ids
+  static std::map<int, std::set<std::string>> trains_at_station_last;
 #endif  
   time_t current_time;
   time(&current_time);
@@ -134,10 +140,10 @@ void CheckStationArrivals() {
         // Print only if train was not at station in previous check
         if (trains_at_station_last[pair.first].count(train.route_id) == 0) {
           Serial.printf(
-            "Train %s ENTERED station %s (ID: %d) at %s",
+            "Train %s ENTERED station %s (ID: %s) at %s",
             train.route_id.c_str(),
             station.name.c_str(),
-            station.id,
+            station.id.c_str(),
             ctime(&train.arrival_time)
           );
         }
@@ -200,7 +206,7 @@ void HandleStationUpdate(JsonObject stationObj, time_t now) {
   }
 }
 
-void onWebSocketMessage(websockets::WebsocketsMessage msg) {
+void OnWebSocketMessage(websockets::WebsocketsMessage msg) {
 #ifdef DEBUG
   Serial.print("WebSocket message: ");
   Serial.println(msg.data());
@@ -220,5 +226,24 @@ void onWebSocketMessage(websockets::WebsocketsMessage msg) {
 
   for (JsonObject stationObj : stations) {
     HandleStationUpdate(stationObj, now);
+  }
+}
+
+void CheckWebsocketConnection() {
+  if (!wsClient.available()) {
+    unsigned long now = millis();
+    if (now - ws_last_attempt >= ws_backoff && ws_attempts < WS_MAX_ATTEMPTS) {
+      Serial.printf("WebSocket disconnected, attempt #%d, reconnecting in %lu ms...\n", ws_attempts + 1, ws_backoff);
+      String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
+      wsClient.connect(wsUrl);
+      ws_last_attempt = now;
+      ws_attempts++;
+      ws_backoff = min(ws_backoff * 2, WS_MAX_BACKOFF);
+    }
+  } else {
+    // Reset backoff and attempts on successful connection
+    ws_attempts = 0;
+    ws_backoff = 1000;
+    ws_last_attempt = millis();
   }
 }
