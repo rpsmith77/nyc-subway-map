@@ -1,4 +1,3 @@
-
 # NYC Subway Map LED Visualization
 
 A real-time visualization of NYC subway train locations using an ESP32 microcontroller and LED strips. This project creates a physical illuminated map that shows trains arriving at stations throughout the New York City subway system by lighting up LEDs at station locations when trains are present.
@@ -9,7 +8,10 @@ A real-time visualization of NYC subway train locations using an ESP32 microcont
 
 ## How It Works
 
-The system connects to the MTA's real-time data feeds through a custom MTAPI server. As trains arrive at stations across the NYC subway system, corresponding LEDs on your physical map light up in the color of the train line (e.g., yellow for the N/Q/R lines, red for the 1/2/3, etc.). The result is a living, breathing visualization of the entire subway network.
+The system connects to the MTA's real-time data feeds through a custom MTAPI server **using WebSockets**. As trains arrive at stations across the NYC subway system, corresponding LEDs on your physical map light up in the color of the train line (e.g., yellow for the N/Q/R lines, red for the 1/2/3, etc.). The result is a living, breathing visualization of the entire subway network.
+
+**WebSocket-based updates:**  
+The ESP32 establishes a persistent WebSocket connection to the MTAPI server. The server pushes real-time train arrival data to the ESP32, which parses the JSON payload and updates the LEDs accordingly. This is more efficient and responsive than periodic HTTP polling.
 
 ## Hardware Requirements
 
@@ -28,7 +30,7 @@ The system connects to the MTA's real-time data feeds through a custom MTAPI ser
     -   FastLED
     -   ArduinoJSON
     -   WiFi
-    -   HTTPClient
+    -   ArduinoWebsockets
     -   Time
 
 ## Project Structure
@@ -71,13 +73,12 @@ const  char*  WIFI_PASSWORD  =  "your_wifi_password";
 // API server details
 const  std::string  SERVER_HOST  =  "your_mtapi_server_ip";
 const  std::string  SERVER_PORT  =  "5000";
-const  std::string  API_BY_ID  =  "http://"  +  SERVER_HOST  +  ":"  +  SERVER_PORT  +  "/by-id/";
 #endif // WIFI_CREDENTIALS_H
 ```
+
 ### 3. MTAPI Server Setup
 
 1.  Clone the MTAPI repository (included in this project or available at  GitHub)
-        
 2.  Create a  `settings.cfg`  file based on  `settings.cfg.sample`:
 ```docker
        # MTA_KEY = 'your_mta_api_key' #deprecated
@@ -87,7 +88,6 @@ const  std::string  API_BY_ID  =  "http://"  +  SERVER_HOST  +  ":"  +  SERVER_P
        MAX_MINUTES = 30
        THREADED = True
 ```
-    
 4.  Install Python dependencies:
 ```bash
     cd  MTAPI
@@ -95,8 +95,6 @@ const  std::string  API_BY_ID  =  "http://"  +  SERVER_HOST  +  ":"  +  SERVER_P
     source  .venv/bin/activate
     pip  install  -r  requirements.txt
 ```
-    
-    
 5.  Run the server:
     
     `python  app.py`
@@ -132,29 +130,28 @@ If you need to modify station positions **use the station map generation file in
 
 ## How the Code Works
 
-### Batch HTTP Requests
+### Real-Time Updates via WebSockets
 
-To avoid overwhelming the ESP32's memory, the code divides station data fetching into batches:
+- The ESP32 connects to the MTAPI server using a WebSocket connection (`ws://<SERVER_HOST>:<SERVER_PORT>/ws`).
+- The server pushes JSON messages containing train arrival data.
+- Incoming messages are handled in `onWebSocketMessage`, updating train arrivals and LED states.
+- The connection is monitored and automatically reconnected if dropped.
 
-const  int  num_groups  =  45;
-
-int  group_size  =  stationMap.size()  /  num_groups;
-
-Each group of stations is fetched on a schedule to ensure all stations get updated within a minute.
-
-### Memory Management
-
-The code monitors heap memory usage and will reboot if memory gets too low:
-``` c++
-if  (free_heap  <  1.25  *  json_doc_size)  {
-	ESP.restart();
+**Example connection logic:**
+```cpp
+wsClient.onMessage(onWebSocketMessage);
+String wsUrl = "ws://" + String(SERVER_HOST.c_str()) + ":" + String(SERVER_PORT.c_str()) + "/ws";
+wsClient.connect(wsUrl);
+...
+void loop() {
+  wsClient.poll(); // process incoming WebSocket messages
 }
 ```
+
 ### Error Handling
 
 -   White LED: WiFi connected successfully
 -   Blinking red LED: WiFi connection issue
--   The system tracks HTTP errors and will reboot if too many occur in sequence
 
 ## Troubleshooting
 
@@ -178,7 +175,6 @@ if  (free_heap  <  1.25  *  json_doc_size)  {
 ## Advanced Configuration
 
 -   Adjust LED brightness in  setup()  using  FastLED.setBrightness()
--   Modify  fetch_interval  to change how often station data updates
 -   Change  json_doc_size  if you encounter JSON parsing errors
 -   Enable  DEBUG  mode for additional diagnostics
 
@@ -189,6 +185,7 @@ This project uses:
 -   MTAPI  for interfacing with MTA data
 -   FastLED  for LED control
 -   ArduinoJson  for JSON parsing
+-   ArduinoWebsockets  for WebSocket communication
 
 ## License
 

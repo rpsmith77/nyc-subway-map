@@ -30,40 +30,11 @@ const int json_doc_size = 200 * 1024;
 void WifiConnection();
 void InitializeTime();
 void CheckStationArrivals();
-void ParseTrains(JsonArray trains_array, std::vector<Train> &trains);
-bool IsServerReachable(const char *host, uint16_t port);
-
-void onWebSocketMessage(websockets::WebsocketsMessage msg) {
-#ifdef DEBUG
-  Serial.print("WebSocket message: ");
-  Serial.println(msg.data());
-#endif
-
-  DynamicJsonDocument doc(json_doc_size);
-  DeserializationError error = deserializeJson(doc, msg.data());
-  if (error) {
-    Serial.print("deserializeJson() failed: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  JsonArray stations = doc["data"].as<JsonArray>();
-  for (JsonObject stationObj : stations) {
-    String id = stationObj["id"];
-    int station_id = atoi(id.c_str());
-    auto it = stationMap.find(station_id);
-    if (it != stationMap.end()) {
-      Station &station = it->second;
-      station.trains.clear();
-      if (stationObj.containsKey("N")) {
-        ParseTrains(stationObj["N"].as<JsonArray>(), station.trains);
-      }
-      if (stationObj.containsKey("S")) {
-        ParseTrains(stationObj["S"].as<JsonArray>(), station.trains);
-      }
-    }
-  }
-}
+Station* FindStationById(const std::string& id);
+void RemoveExpiredTrains(Station& station, time_t now);
+void AddNewTrains(Station& station, JsonArray arr);
+void HandleStationUpdate(JsonObject stationObj, time_t now);
+void onWebSocketMessage(websockets::WebsocketsMessage msg);
 
 void setup() {
   Serial.begin(115200);
@@ -78,10 +49,8 @@ void setup() {
   }
   Serial.println("\nWiFi connected!");
 
-  FastLED.addLeds<LED_TYPE, DATA_PIN_SUBWAY, COLOR_ORDER>(leds,
-                                                          NUM_LEDS_SUBWAY);
-  FastLED.addLeds<LED_TYPE, DATA_PIN_ERROR, COLOR_ORDER>(error_leds,
-                                                         NUM_LEDS_ERROR);
+  FastLED.addLeds<LED_TYPE, DATA_PIN_SUBWAY, COLOR_ORDER>(leds, NUM_LEDS_SUBWAY);
+  FastLED.addLeds<LED_TYPE, DATA_PIN_ERROR, COLOR_ORDER>(error_leds, NUM_LEDS_ERROR);
   FastLED.setBrightness(5);
 
   InitializeTime();
@@ -104,17 +73,11 @@ void check_websocket_connection() {
 
 void loop() {
   WifiConnection();
-
   CheckStationArrivals();
-
   FastLED.show();
-
-  EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
-
   wsClient.poll(); 
-
-  EVERY_N_BSECONDS(60) { check_websocket_connection(); }
-
+  EVERY_N_BSECONDS(30) { check_websocket_connection(); }
+  EVERY_N_BSECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
 }
 
 // put function definitions here:
@@ -149,18 +112,6 @@ void InitializeTime() {
   }
   Serial.println(&timeinfo, "Time initialized: %A, %B %d %Y %H:%M:%S %Z (%z)");
 }
-
-void ParseTrains(JsonArray trains_array, std::vector<Train> &trains) {
-  for (JsonObject train : trains_array) {
-    Train t;
-    t.route_id = train["route"].as<std::string>();
-    struct tm tm;
-    strptime(train["time"].as<const char *>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
-    t.arrival_time = mktime(&tm);
-    trains.push_back(t);
-  }
-}
-
 
 void CheckStationArrivals() {
 #ifdef DEBUG
@@ -200,12 +151,74 @@ void CheckStationArrivals() {
   }
 }
 
-bool IsServerReachable(const char *host, uint16_t port) {
-  WiFiClient client;
-  if (client.connect(host, port)) {
-    client.stop();
-    return true;
-  } else {
-    return false;
+Station* FindStationById(const std::string& id) {
+  for (auto& pair : stationMap) {
+    if (pair.second.id == id) return &pair.second;
+  }
+  return nullptr;
+}
+
+void RemoveExpiredTrains(Station& station, time_t now) {
+  station.trains.erase(
+    std::remove_if(
+      station.trains.begin(),
+      station.trains.end(),
+      [now](const Train& t) { return t.arrival_time < now - 60; }
+    ),
+    station.trains.end()
+  );
+}
+
+void AddNewTrains(Station& station, JsonArray arr) {
+  for (JsonObject train : arr) {
+    Train t;
+    t.route_id = train["route"].as<std::string>();
+    struct tm tm;
+    strptime(train["time"].as<const char*>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
+    t.arrival_time = mktime(&tm);
+
+    bool exists = false;
+    for (const auto& existing : station.trains) {
+      if (existing.route_id == t.route_id && existing.arrival_time == t.arrival_time) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) {
+      station.trains.push_back(t);
+    }
+  }
+}
+
+void HandleStationUpdate(JsonObject stationObj, time_t now) {
+  std::string json_id = stationObj["id"].as<std::string>();
+  Station* station = FindStationById(json_id);
+  if (station) {
+    RemoveExpiredTrains(*station, now);
+    if (stationObj.containsKey("N")) AddNewTrains(*station, stationObj["N"].as<JsonArray>());
+    if (stationObj.containsKey("S")) AddNewTrains(*station, stationObj["S"].as<JsonArray>());
+  }
+}
+
+void onWebSocketMessage(websockets::WebsocketsMessage msg) {
+#ifdef DEBUG
+  Serial.print("WebSocket message: ");
+  Serial.println(msg.data());
+#endif
+
+  DynamicJsonDocument doc(json_doc_size);
+  DeserializationError error = deserializeJson(doc, msg.data());
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonArray stations = doc["data"].as<JsonArray>();
+  time_t now;
+  time(&now);
+
+  for (JsonObject stationObj : stations) {
+    HandleStationUpdate(stationObj, now);
   }
 }
