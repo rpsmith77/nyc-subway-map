@@ -1,11 +1,11 @@
 import csv
 import datetime
+from pathlib import Path
 
-# Define the path to the CSV file and the output header file
 csv_file_path = 'stations.csv'
-header_file_path = '../include/station_map.h'
+header_file_path = '../include/GeneratedStationMap.h'
+cpp_file_path = '../src/GeneratedStationMap.cpp'
 
-# Read the CSV file and parse the data
 stations = []
 led_index = 0
 with open(csv_file_path, mode='r') as csv_file:
@@ -18,39 +18,46 @@ with open(csv_file_path, mode='r') as csv_file:
         })
         led_index += 1
 
-# Get current timestamp
 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Generate the station_map.h file content
+# Header: extern declaration only (single storage defined in .cpp)
 header_content = f"""#ifndef STATION_MAP_H
 #define STATION_MAP_H
 
 /**
  * Auto-generated station map header file
  * Generated on: {current_time}
- * 
- * IMPORTANT: LED indices in this map correspond directly to the physical
- * order of LEDs as they are soldered in the hardware. The order of stations
- * in stations.csv determines these indices.
+ *
+ * IMPORTANT: Only declares the stationMap symbol.
+ * The definition is generated in src/GeneratedStationMap.cpp to avoid
+ * duplicate copies across translation units.
  */
 
 #include <string>
 #include <map>
-#include "MtaHelper.h"
+#include "Station.h"
 
-static std::map<int, Station> stationMap = {{
-"""
-
-for station in stations:
-    header_content += f'    {{{station["ledIndex"]}, Station("{station["stop_id"]}", "{station["name"]}")}},\n'
-
-header_content += """};
+extern std::map<int, Station> stationMap;
 
 #endif // STATION_MAP_H
 """
 
-# Write the generated content to the station_map.h file
-with open(header_file_path, mode='w') as header_file:
-    header_file.write(header_content)
+# CPP: single definition
+cpp_content = f"""// Auto-generated on: {current_time}
+#include "GeneratedStationMap.h"
 
-print(f"Generated {header_file_path} successfully.")
+std::map<int, Station> stationMap = {{
+"""
+
+for station in stations:
+    stop_id = station["stop_id"].replace('"', '\\"')
+    name = station["name"].replace('"', '\\"')
+    cpp_content += f'    {{{station["ledIndex"]}, Station("{stop_id}", "{name}")}},\n'
+
+cpp_content += "};\n"
+
+# Write files
+Path(header_file_path).write_text(header_content, encoding="utf-8")
+Path(cpp_file_path).write_text(cpp_content, encoding="utf-8")
+
+print(f"Generated {header_file_path} and {cpp_file_path} successfully.")

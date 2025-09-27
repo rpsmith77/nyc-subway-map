@@ -1,20 +1,7 @@
-#ifndef STATION_MAP_H
-#define STATION_MAP_H
+// Auto-generated on: 2025-09-27 14:23:37
+#include "GeneratedStationMap.h"
 
-/**
- * Auto-generated station map header file
- * Generated on: 2025-05-12 15:47:27
- * 
- * IMPORTANT: LED indices in this map correspond directly to the physical
- * order of LEDs as they are soldered in the hardware. The order of stations
- * in stations.csv determines these indices.
- */
-
-#include <string>
-#include <map>
-#include "MtaHelper.h"
-
-static std::map<int, Station> stationMap = {
+std::map<int, Station> stationMap = {
     {0, Station("S09", "Tottenville")},
     {1, Station("S11", "Arthur Kill")},
     {2, Station("S13", "Richmond Valley")},
@@ -471,5 +458,3 @@ static std::map<int, Station> stationMap = {
     {453, Station("602", "Buhre Av")},
     {454, Station("601", "Pelham Bay Park")},
 };
-
-#endif // STATION_MAP_H
