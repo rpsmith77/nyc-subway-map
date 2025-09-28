@@ -1,20 +1,33 @@
 #include "NetworkManager.h"
 #include <Arduino.h>
 #include "MTAManager.h"
+#include <WiFi.h>
 
 NetworkManager::NetworkManager(const char* ssid, const char* password, const char* host, const char* port)
     : ssid(ssid), password(password), host(host), port(port), wifiConnectionStatus(false), maxBackoffMs(30000){
 }
 
 void NetworkManager::initializeWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setSleep(false);          // prevent modem sleep latency spikes
+  WiFi.setAutoReconnect(true);   // retry automatically
   WiFi.begin(ssid, password);
   Serial.println("Connecting to WiFi");
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  unsigned long start = millis();
+  // Wait for WiFi, but cap at 20s so setup doesn't block forever if AP is unreachable.
+  // Exiting lets the main loop handle retries/backoff without stalling the device.
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(250);
     Serial.print(".");
+    yield();
   }
-  Serial.println("\nWiFi connected!");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+  } else {
+    Serial.println("\nWiFi connect timeout, continuing and will retry in loop...");
+  }
 }
 
 bool NetworkManager::checkWifiConnection() {
@@ -28,7 +41,7 @@ bool NetworkManager::checkWifiConnection() {
       Serial.println("Connected");
     }
     backoffMs = 1000;
-    failedAttempts = 0; // Reset on success
+    failedAttempts = 0;
     return true;
   }
 
@@ -42,6 +55,7 @@ bool NetworkManager::checkWifiConnection() {
   if (now - lastAttempt >= backoffMs) {
     Serial.println("Attempting WiFi reconnect...");
     WiFi.disconnect(true);
+    delay(50);
     WiFi.begin(ssid, password);
     lastAttempt = now;
     backoffMs = min(backoffMs * 2, maxBackoffMs);
@@ -70,29 +84,48 @@ void NetworkManager::initializeWebsocket() {
 #endif
   });
   String wsUrl = "ws://" + String(host) + ":" + String(port) + "/ws";
-  wsClient.connect(wsUrl); 
+  wsClient.connect(wsUrl);
 }
 
 bool NetworkManager::checkWebsocketConnection() {
   static unsigned long lastAttempt = 0;
   static unsigned long backoffMs = 1000;
+  static unsigned long lastPing = 0;
+  static bool wasConnected = false;
+  static bool everConnected = false;
+
+  wsClient.poll();
 
   if (!wsClient.available()) {
+    wasConnected = false;
+
     unsigned long now = millis();
     if (now - lastAttempt >= backoffMs) {
       Serial.println("WS disconnected, attempting reconnect...");
+      wsClient.close();
+      delay(20);
       String wsUrl = "ws://" + String(host) + ":" + String(port) + "/ws";
       wsClient.connect(wsUrl);
       lastAttempt = now;
       backoffMs = min(backoffMs * 2, maxBackoffMs);
+      lastPing = 0;
     }
     return false;
   } else {
     backoffMs = 1000;
-    static unsigned long lastPing = 0;
-    if (millis() - lastPing > 30000) {
+    if (!wasConnected) {
+      if (everConnected) {
+        Serial.println("WS reconnected");
+      } else {
+        everConnected = true; // first connection, don't label as reconnect
+      }
+      wasConnected = true;
+    }
+
+    unsigned long now = millis();
+    if (now - lastPing > 10000) { // ping every 10s
       wsClient.ping();
-      lastPing = millis();
+      lastPing = now;
     }
     return true;
   }
@@ -106,4 +139,7 @@ void NetworkManager::onWebSocketMessage(websockets::WebsocketsMessage msg) {
   MtaManager::parseData(msg);
 }
 
-void NetworkManager::poll() { wsClient.poll(); }
+void NetworkManager::poll() {
+  wsClient.poll();
+  yield();
+}

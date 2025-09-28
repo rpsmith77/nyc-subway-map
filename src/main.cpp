@@ -24,16 +24,16 @@ void setup() {
 }
 
 void loop() {
-  if (net.checkWifiConnection() && net.checkWebsocketConnection()) {
-    net.poll();
-  }
+  net.poll(); 
+  
+  if (net.checkWifiConnection())
+    net.checkWebsocketConnection();
 
   MtaManager::purgeExpiredTrains();
   MtaManager::checkArrivals();
 
-  if (!MtaManager::hasAnyTrainData()) {
+  if (!MtaManager::hasAnyTrainData())
     LEDManager::awaitingDataSequence();
-  }
 
   LEDManager::show();
   EVERY_N_SECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
