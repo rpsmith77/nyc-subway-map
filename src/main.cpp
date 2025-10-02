@@ -11,6 +11,10 @@
 #include "LEDManager.h"
 #include "MTAManager.h"
 
+#ifdef HEAPDEBUG
+#include "HeapDebug.h"
+#endif
+
 NetworkManager net(WIFI_SSID, WIFI_PASSWORD, SERVER_HOST, SERVER_PORT);
 
 void setup() {
@@ -38,4 +42,9 @@ void loop() {
   LEDManager::show();
   EVERY_N_SECONDS(1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
   EVERY_N_SECONDS(60) { TimeManager::printCurrentTime(); }
+
+#ifdef HEAPDEBUG
+  EVERY_N_SECONDS(30) { HeapDebug::printHeapUsage(); }
+#endif
+
 }

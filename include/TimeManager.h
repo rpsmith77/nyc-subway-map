@@ -4,8 +4,7 @@
 class TimeManager {
 public:
     static void initializeTime();
-    static void printCurrentTime();
-    
+    static void printCurrentTime();    
 };
 
 #endif // TIMEMANAGER_H
