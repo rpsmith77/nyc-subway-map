@@ -1,3 +1,3 @@
 [submodule "MTAPI"]
 	path = MTAPI
-	url = ./MTAPI
+	url = https://github.com/rpsmith77/MTAPI.git
