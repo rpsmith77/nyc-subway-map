@@ -96,6 +96,20 @@ void MtaManager::addNewTrains(Station& station, JsonArray arr) {
     strptime(train["time"].as<const char*>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
     t.arrivalTime = mktime(&tm);
 
+    // Reject trains more than 30s old or over 5 minutes ahead.
+    time_t now;
+    time(&now);
+    double timeDiff = difftime(t.arrivalTime, now);
+    if (timeDiff > 300 || timeDiff < -30.1) {
+#ifdef DEBUG
+      Serial.printf("Skipping train station=%s route=%s diff=%.1fs arrival=%ld now=%ld\n",
+                    station.id.c_str(), t.routeId.c_str(), timeDiff,
+                    static_cast<long>(t.arrivalTime), static_cast<long>(now));
+#endif
+      continue;
+    }
+
+
     bool exists = false;
     for (const auto& existing : station.trains) {
       if (existing.routeId == t.routeId && existing.arrivalTime == t.arrivalTime) {
