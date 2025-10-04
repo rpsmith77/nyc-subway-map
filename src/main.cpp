@@ -21,6 +21,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
   net.initializeWifi();
+  delay(200);
   net.initializeWebsocket();
   LEDManager::initializeLEDs();
   TimeManager::initializeTime();
@@ -44,7 +45,7 @@ void loop() {
   EVERY_N_SECONDS(60) { TimeManager::printCurrentTime(); }
 
 #ifdef HEAPDEBUG
-  EVERY_N_SECONDS(30) { HeapDebug::printHeapUsage(); }
+  EVERY_N_SECONDS(60) { HeapDebug::printHeapUsage(); }
 #endif
 
 }

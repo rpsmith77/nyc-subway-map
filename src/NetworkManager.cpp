@@ -4,7 +4,23 @@
 #include <WiFi.h>
 
 NetworkManager::NetworkManager(const char* ssid, const char* password, const char* host, const char* port)
-    : ssid(ssid), password(password), host(host), port(port), wifiConnectionStatus(false), maxBackoffMs(30000){
+    : ssid(ssid),
+      password(password),
+      host(host),
+      port(port),
+      wifiConnectionStatus(false),
+      wsClient(),
+      maxBackoffMs(30000),
+      wifiLastAttempt(0),
+      wifiBackoffMs(1000),
+      wifiFailedAttempts(0),
+      websocketLastAttempt(0),
+      websocketBackoffMs(1000),
+      websocketFailedAttempts(0),
+      websocketLastPing(0),
+      websocketWasConnected(false),
+      websocketEverConnected(false)
+{
 }
 
 void NetworkManager::initializeWifi() {
@@ -31,44 +47,54 @@ void NetworkManager::initializeWifi() {
 }
 
 bool NetworkManager::checkWifiConnection() {
-  static unsigned long lastAttempt = 0;
-  static unsigned long backoffMs = 1000;
-  static int failedAttempts = 0;
-
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!wifiConnectionStatus) {
-      wifiConnectionStatus = true;
-      Serial.println("Connected");
+    if (WiFi.status() == WL_CONNECTED) {
+        handleWifiConnected();
+        return true;
+    } else {
+        handleWifiDisconnected();
+        attemptWifiReconnect();
+        return false;
     }
-    backoffMs = 1000;
-    failedAttempts = 0;
-    return true;
-  }
+}
 
-  // Disconnected
-  if (wifiConnectionStatus) {
-    Serial.println("WiFi lost");
-  }
-  wifiConnectionStatus = false;
+void NetworkManager::handleWifiConnected() {
+    if (!wifiConnectionStatus) {
+        wifiConnectionStatus = true;
+        Serial.println("Connected");
+    }
+    wifiBackoffMs = 1000;
+    wifiFailedAttempts = 0;
+}
 
-  unsigned long now = millis();
-  if (now - lastAttempt >= backoffMs) {
-    Serial.println("Attempting WiFi reconnect...");
-    WiFi.disconnect(true);
-    delay(50);
-    WiFi.begin(ssid, password);
-    lastAttempt = now;
-    backoffMs = min(backoffMs * 2, maxBackoffMs);
+void NetworkManager::handleWifiDisconnected() {
+    if (wifiConnectionStatus) {
+        Serial.println("WiFi lost");
+    }
+    wifiConnectionStatus = false;
+}
 
-    if (backoffMs == maxBackoffMs) {
-      failedAttempts++;
-      if (failedAttempts >= 5) {
+void NetworkManager::attemptWifiReconnect() {
+    unsigned long now = millis();
+    if (now - wifiLastAttempt >= wifiBackoffMs) {
+        Serial.println("Attempting WiFi reconnect...");
+        WiFi.disconnect(true);
+        delay(50);
+        WiFi.begin(ssid, password);
+        wifiLastAttempt = now;
+        wifiBackoffMs = min(wifiBackoffMs * 2, maxBackoffMs);
+
+        if (wifiBackoffMs == maxBackoffMs) {
+            wifiFailedAttempts++;
+            handleMaxWifiFailures();
+        }
+    }
+}
+
+void NetworkManager::handleMaxWifiFailures() {
+    if (wifiFailedAttempts >= 5) {
         Serial.println("Max WiFi reconnect attempts reached. Rebooting ESP32...");
         ESP.restart();
-      }
     }
-  }
-  return false;
 }
 
 void NetworkManager::initializeWebsocket() {
@@ -88,46 +114,74 @@ void NetworkManager::initializeWebsocket() {
 }
 
 bool NetworkManager::checkWebsocketConnection() {
-  static unsigned long lastAttempt = 0;
-  static unsigned long backoffMs = 1000;
-  static unsigned long lastPing = 0;
-  static bool wasConnected = false;
-  static bool everConnected = false;
-
   wsClient.poll();
 
   if (!wsClient.available()) {
-    wasConnected = false;
-
-    unsigned long now = millis();
-    if (now - lastAttempt >= backoffMs) {
-      Serial.println("WS disconnected, attempting reconnect...");
-      wsClient.close();
-      delay(20);
-      String wsUrl = "ws://" + String(host) + ":" + String(port) + "/ws";
-      wsClient.connect(wsUrl);
-      lastAttempt = now;
-      backoffMs = min(backoffMs * 2, maxBackoffMs);
-      lastPing = 0;
-    }
+    handleWebsocketDisconnect();
     return false;
   } else {
-    backoffMs = 1000;
-    if (!wasConnected) {
-      if (everConnected) {
-        Serial.println("WS reconnected");
-      } else {
-        everConnected = true; // first connection, don't label as reconnect
-      }
-      wasConnected = true;
-    }
-
-    unsigned long now = millis();
-    if (now - lastPing > 10000) { // ping every 10s
-      wsClient.ping();
-      lastPing = now;
-    }
+    handleWebsocketConnected();
     return true;
+  }
+}
+
+void NetworkManager::handleWebsocketDisconnect() {
+  // Use member variables for state
+  websocketWasConnected = false;
+  unsigned long now = millis();
+  if (now - websocketLastAttempt >= websocketBackoffMs) {
+    attemptWebsocketReconnect();
+  }
+}
+
+void NetworkManager::attemptWebsocketReconnect() {
+  Serial.println("WS disconnected, attempting reconnect...");
+  wsClient.close();
+  delay(20);
+  String wsUrl = "ws://" + String(host) + ":" + String(port) + "/ws";
+  wsClient.connect(wsUrl);
+  websocketLastAttempt = millis();
+  websocketBackoffMs = min(websocketBackoffMs * 2, maxBackoffMs);
+  websocketLastPing = 0;
+
+  if (websocketBackoffMs == maxBackoffMs) {
+    websocketFailedAttempts++;
+    if (websocketFailedAttempts >= 5) {
+      if (isServerPingable()) {
+        Serial.println("Server is pingable. Rebooting ESP32...");
+        ESP.restart();
+      } else {
+        Serial.println("Server is not pingable. Not rebooting.");
+        websocketFailedAttempts = 0;
+      }
+    }
+  }
+}
+
+bool NetworkManager::isServerPingable() {
+  WiFiClient pingClient;
+  if (pingClient.connect(host, atoi(port))) {
+    pingClient.stop();
+    return true;
+  }
+  return false;
+}
+
+void NetworkManager::handleWebsocketConnected() {
+  websocketBackoffMs = 1000;
+  websocketFailedAttempts = 0;
+  if (!websocketWasConnected) {
+    if (websocketEverConnected) {
+      Serial.println("WS reconnected");
+    } else {
+      websocketEverConnected = true;
+    }
+    websocketWasConnected = true;
+  }
+  unsigned long now = millis();
+  if (now - websocketLastPing > 10000) {
+    wsClient.ping();
+    websocketLastPing = now;
   }
 }
 
