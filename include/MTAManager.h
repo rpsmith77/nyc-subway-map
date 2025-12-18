@@ -13,7 +13,7 @@ public:
     static void checkArrivals();
     static Station* findStationById(const std::string& id);
     static void purgeExpiredTrains();
-    static void addNewTrains(Station& station, JsonArray arr);
+    static void addNewTrains(Station& station, JsonArray arr, time_t now);
     static void handleStationUpdate(JsonObject stationObj, time_t now);
     static bool hasAnyTrainData();
 private:

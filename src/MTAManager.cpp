@@ -9,6 +9,18 @@
 
 SubwayColorMap MtaManager::colorMap;
 
+static time_t parseIso8601(const char* str) {
+    struct tm tm = {0};
+    tm.tm_year = atoi(str) - 1900;
+    tm.tm_mon = atoi(str + 5) - 1;
+    tm.tm_mday = atoi(str + 8);
+    tm.tm_hour = atoi(str + 11);
+    tm.tm_min = atoi(str + 14);
+    tm.tm_sec = atoi(str + 17);
+    tm.tm_isdst = -1;
+    return mktime(&tm);
+}
+
 void MtaManager::parseData(websockets::WebsocketsMessage msg) {
   StaticJsonDocument<200> filter;
   filter["data"][0]["id"] = true;
@@ -102,17 +114,16 @@ void MtaManager::purgeExpiredTrains() {
   }
 }
 
-void MtaManager::addNewTrains(Station& station, JsonArray arr) {
+void MtaManager::addNewTrains(Station& station, JsonArray arr, time_t now) {
   for (JsonObject train : arr) {
+    const char* timeStr = train["time"].as<const char*>();
+    if (!timeStr) continue;
+
     Train t;
     t.routeId = train["route"].as<std::string>();
-    struct tm tm;
-    strptime(train["time"].as<const char*>(), "%Y-%m-%dT%H:%M:%S%z", &tm);
-    t.arrivalTime = mktime(&tm);
+    t.arrivalTime = parseIso8601(timeStr);
 
     // Reject trains more than 30s old or over 5 minutes ahead.
-    time_t now;
-    time(&now);
     double timeDiff = difftime(t.arrivalTime, now);
     if (timeDiff > 300 || timeDiff < -30.1) {
 #ifdef DEBUG
@@ -141,8 +152,8 @@ void MtaManager::handleStationUpdate(JsonObject stationObj, time_t now) {
   std::string jsonId = stationObj["id"].as<std::string>();
   Station* station = findStationById(jsonId);
   if (station) {
-    if (stationObj.containsKey("N")) addNewTrains(*station, stationObj["N"].as<JsonArray>());
-    if (stationObj.containsKey("S")) addNewTrains(*station, stationObj["S"].as<JsonArray>());
+    if (stationObj.containsKey("N")) addNewTrains(*station, stationObj["N"].as<JsonArray>(), now);
+    if (stationObj.containsKey("S")) addNewTrains(*station, stationObj["S"].as<JsonArray>(), now);
   }
 }
 
