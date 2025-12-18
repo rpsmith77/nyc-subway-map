@@ -28,9 +28,7 @@ void setup() {
   delay(3000);
 }
 
-void loop() {
-  net.poll(); 
-  
+void loop() {  
   if (net.checkWifiConnection())
     net.checkWebsocketConnection();
 
