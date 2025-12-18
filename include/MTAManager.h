@@ -15,11 +15,11 @@ public:
     static void purgeExpiredTrains();
     static void addNewTrains(Station& station, JsonArray arr);
     static void handleStationUpdate(JsonObject stationObj, time_t now);
-    static bool isAnyTrainPresent();
     static bool hasAnyTrainData();
 private:
     static SubwayColorMap colorMap;
-    static inline DynamicJsonDocument doc{200 * 1024};
+    static constexpr size_t jsonSize = 100U * 1024U;
+    static inline StaticJsonDocument<jsonSize> doc;
 };
 
 #endif // MTAMANAGER_H

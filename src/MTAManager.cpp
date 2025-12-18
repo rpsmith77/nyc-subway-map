@@ -10,13 +10,27 @@
 SubwayColorMap MtaManager::colorMap;
 
 void MtaManager::parseData(websockets::WebsocketsMessage msg) {
+  StaticJsonDocument<200> filter;
+  filter["data"][0]["id"] = true;
+  filter["data"][0]["N"][0]["route"] = true;
+  filter["data"][0]["N"][0]["time"] = true;
+  filter["data"][0]["S"][0]["route"] = true;
+  filter["data"][0]["S"][0]["time"] = true;
+
   doc.clear();
-  DeserializationError error = deserializeJson(doc, msg.data());
+  
+  DeserializationError error = deserializeJson(doc, msg.data(), DeserializationOption::Filter(filter));
+
   if (error) {
     Serial.print("deserializeJson() failed: ");
     Serial.println(error.c_str());
     return;
   }
+
+  float memoryKB = doc.memoryUsage() / 1024.0;
+  Serial.print("JSON Doc Memory Usage: ");
+  Serial.print(memoryKB, 1);
+  Serial.println(" KB");
 
   JsonArray stations = doc["data"].as<JsonArray>();
   time_t now;
@@ -130,16 +144,6 @@ void MtaManager::handleStationUpdate(JsonObject stationObj, time_t now) {
     if (stationObj.containsKey("N")) addNewTrains(*station, stationObj["N"].as<JsonArray>());
     if (stationObj.containsKey("S")) addNewTrains(*station, stationObj["S"].as<JsonArray>());
   }
-}
-
-bool MtaManager::isAnyTrainPresent() {
-  for (const auto& pair : stationMap) {
-    const Station& station = pair.second;
-    if (!station.trains.empty()) {
-      return true;
-    }
-  }
-  return false;
 }
 
 bool MtaManager::hasAnyTrainData() {

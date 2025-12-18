@@ -21,10 +21,10 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
   net.initializeWifi();
-  delay(200);
-  net.initializeWebsocket();
   LEDManager::initializeLEDs();
   TimeManager::initializeTime();
+  delay(200);
+  net.initializeWebsocket();
   delay(3000);
 }
 

@@ -12,7 +12,7 @@ NetworkManager::NetworkManager(const char* ssid, const char* password, const cha
       wsClient(),
       maxBackoffMs(30000),
       wifiLastAttempt(0),
-      wifiBackoffMs(1000),
+      wifiBackoffMs(5000),
       wifiFailedAttempts(0),
       websocketLastAttempt(0),
       websocketBackoffMs(1000),
@@ -29,32 +29,17 @@ void NetworkManager::initializeWifi() {
   WiFi.setSleep(false);          // prevent modem sleep latency spikes
   WiFi.setAutoReconnect(true);   // retry automatically
   WiFi.begin(ssid, password);
-  Serial.println("Connecting to WiFi");
-
-  unsigned long start = millis();
-  // Wait for WiFi, but cap at 20s so setup doesn't block forever if AP is unreachable.
-  // Exiting lets the main loop handle retries/backoff without stalling the device.
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(250);
-    Serial.print(".");
-    yield();
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
-  } else {
-    Serial.println("\nWiFi connect timeout, continuing and will retry in loop...");
-  }
+  wifiLastAttempt = millis();    // Start the backoff timer from now
 }
 
 bool NetworkManager::checkWifiConnection() {
-    if (WiFi.status() == WL_CONNECTED) {
-        handleWifiConnected();
-        return true;
-    } else {
+    if (WiFi.status() != WL_CONNECTED) {
         handleWifiDisconnected();
         attemptWifiReconnect();
         return false;
     }
+    handleWifiConnected();
+    return true;
 }
 
 void NetworkManager::handleWifiConnected() {
